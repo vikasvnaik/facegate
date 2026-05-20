@@ -6,19 +6,23 @@ import androidx.lifecycle.viewModelScope
 import com.vikas.facegate.data.camera.CameraRepository
 import com.vikas.facegate.data.camera.CameraState
 import com.vikas.facegate.data.camera.SessionState
+import com.vikas.facegate.data.face.FaceRepository
 import com.vikas.facegate.domain.model.AccessDecision
+import com.vikas.facegate.domain.model.FaceResult
 import com.vikas.facegate.domain.model.PermissionState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class FaceGateViewModel @Inject constructor(
-    private val cameraRepository: CameraRepository
+    private val cameraRepository: CameraRepository,
+    private val faceRepository: FaceRepository
 ): ViewModel() {
 
     private val _accessDecision = MutableStateFlow<AccessDecision>(AccessDecision.Idle)
@@ -29,10 +33,13 @@ class FaceGateViewModel @Inject constructor(
     private val _debugLog = MutableStateFlow("Waiting...")
     val debugLog: StateFlow<String> = _debugLog.asStateFlow()
 
+    private val _faceResults = MutableStateFlow<List<FaceResult>>(emptyList())
+    val faceResult: StateFlow<List<FaceResult>> = _faceResults.asStateFlow()
+
     val cameraState: StateFlow<CameraState> = cameraRepository.cameraState
     val sessionState: StateFlow<SessionState> = cameraRepository.sessionState
 
-    private var frameCountJob: Job? = null
+    private var detectionJob: Job? = null
 
     fun onPermissionState(state: PermissionState) {
         _permissionState.value = state
@@ -63,28 +70,30 @@ class FaceGateViewModel @Inject constructor(
         }
     }
 
-    fun startFrameCounter() {
-        frameCountJob?.cancel()
-        frameCountJob = viewModelScope.launch {
-            var count = 0
-            cameraRepository.frameFlow()
-                .collect { image ->
-                    count++
-                    // ALWAYS close the image — even in this test
-                    image.close()
-                    if (count % 30 == 0) { // log every 30 frames (~1 sec)
-                        _debugLog.value = "Frames received: $count (~${count/30} sec)"
-                    }
+    private fun startFaceDetection() {
+        detectionJob?.cancel()
+        detectionJob = viewModelScope.launch {
+            faceRepository.faceResultFlow(
+                cameraRepository.frameFlow()
+            ).collect { faces ->
+                _faceResults.value = faces
+                _debugLog.value = when {
+                    faces.isEmpty() -> "No face detected"
+                    faces.size == 1 -> "Face detected " +
+                            "(eye L:${faces[0].leftEyeOpenProbability?.let {
+                                "%.0f%%".format(it * 100)
+                            } ?: "?"})"
+                    else -> "${faces.size} faces detected"
                 }
+            }
         }
     }
 
     fun startPreview(previewSurface: Surface) {
         cameraRepository.startPreview(viewModelScope, previewSurface)
-        // Small delay to let session configure before collecting frames
         viewModelScope.launch {
-            kotlinx.coroutines.delay(500)
-            startFrameCounter()
+            cameraRepository.sessionState.first { it is SessionState.Ready }
+            startFaceDetection()
         }
     }
 
@@ -96,11 +105,14 @@ class FaceGateViewModel @Inject constructor(
         cameraRepository.releasePreviewSurface()
     }
 
-    fun closeCamera() = cameraRepository.close()
+    fun closeCamera() {
+        detectionJob?.cancel()
+        cameraRepository.close()
+    }
 
     override fun onCleared() {
         super.onCleared()
-        cameraRepository.close()
+        closeCamera()
     }
     fun log(msg: String) {
         _debugLog.value = msg

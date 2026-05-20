@@ -2,6 +2,7 @@ package com.vikas.facegate.di
 
 import android.content.Context
 import android.hardware.camera2.CameraManager
+import com.vikas.facegate.data.face.FaceDetectorSource
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -19,4 +20,8 @@ object AppModule {
         @ApplicationContext context: Context
     ): CameraManager =
         context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+
+    @Provides
+    @Singleton
+    fun provideFaceDetectorSource(): FaceDetectorSource = FaceDetectorSource()
 }
