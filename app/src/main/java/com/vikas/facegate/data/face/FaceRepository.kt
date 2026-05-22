@@ -20,14 +20,14 @@ class FaceRepository @Inject constructor(
      * Takes the raw camera frame flow and transforms it into
      * a flow of face detection results.
      */
-    fun faceResultFlow(frameFlow: Flow<Image>): Flow<List<FaceResult>> =
+    fun faceResultFlow(frameFlow: Flow<Image>, rotationDegrees: Int): Flow<List<FaceResult>> =
         frameFlow
             // We removed .conflate() here because it drops frames without closing them.
             // Dropping logic is now handled at the source in CameraFrameSource
             // using trySend + immediate image.close() on failure.
             .map { image ->
                 try {
-                    val results = faceDetectorSource.detectFaces(image)
+                    val results = faceDetectorSource.detectFaces(image, rotationDegrees)
                     results
                 } catch (e: Exception) {
                     Log.e("FaceRepository", "ML Kit error", e)

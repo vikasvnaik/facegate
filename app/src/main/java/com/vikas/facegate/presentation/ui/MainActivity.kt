@@ -1,5 +1,6 @@
 package com.vikas.facegate.presentation.ui
 
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -40,6 +41,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val rotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display?.rotation ?: 0
+        } else {
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.rotation
+        }
+        val rotationDegrees = when (rotation) {
+            0 -> 270   // portrait
+            1 -> 0     // landscape right
+            2 -> 90    // reverse portrait
+            3 -> 180   // landscape left
+            else -> 270
+        }
+        viewModel.setRotationDegrees(rotationDegrees)
 
         // Initial check for permissions
         lifecycleScope.launch {
@@ -113,19 +129,22 @@ fun MainContent(
                     }
                 )
 
-                // 2. UI Overlay (Debug Text) sits on top of the camera frames
-                Box(
+                // Layer 2 — face bounding boxes (on top, transparent bg)
+                val faces by viewModel!!.faceResults.collectAsState()
+                FaceOverlay(
+                    faces = faces,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Layer 3 — debug text (top of screen)
+                Text(
+                    text = log,
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = 48.dp, start = 16.dp, end = 16.dp)
-                ) {
-                    Text(
-                        text = log,
-                        modifier = Modifier.align(Alignment.TopCenter),
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
+                        .align(Alignment.TopCenter)
+                        .padding(top = 48.dp, start = 16.dp, end = 16.dp),
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
 
             is PermissionState.Denied,

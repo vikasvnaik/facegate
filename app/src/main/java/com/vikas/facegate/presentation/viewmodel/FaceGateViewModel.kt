@@ -34,12 +34,17 @@ class FaceGateViewModel @Inject constructor(
     val debugLog: StateFlow<String> = _debugLog.asStateFlow()
 
     private val _faceResults = MutableStateFlow<List<FaceResult>>(emptyList())
-    val faceResult: StateFlow<List<FaceResult>> = _faceResults.asStateFlow()
+    val faceResults: StateFlow<List<FaceResult>> = _faceResults.asStateFlow()
 
     val cameraState: StateFlow<CameraState> = cameraRepository.cameraState
     val sessionState: StateFlow<SessionState> = cameraRepository.sessionState
 
     private var detectionJob: Job? = null
+    private var rotationDegrees: Int = 270
+
+    fun setRotationDegrees(degrees: Int) {
+        rotationDegrees = degrees
+    }
 
     fun onPermissionState(state: PermissionState) {
         _permissionState.value = state
@@ -74,7 +79,8 @@ class FaceGateViewModel @Inject constructor(
         detectionJob?.cancel()
         detectionJob = viewModelScope.launch {
             faceRepository.faceResultFlow(
-                cameraRepository.frameFlow()
+                cameraRepository.frameFlow(),
+                rotationDegrees
             ).collect { faces ->
                 _faceResults.value = faces
                 _debugLog.value = when {
