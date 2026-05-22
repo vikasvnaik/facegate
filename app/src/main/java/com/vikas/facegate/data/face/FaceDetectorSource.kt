@@ -58,6 +58,7 @@ class FaceDetectorSource @Inject constructor() {
     /**
      * Maps ML Kit's Face to domain model.
      */
+    // Replace the toDomainModel() extension in FaceDetectorSource.kt
     private fun Face.toDomainModel(): FaceResult {
         val box = boundingBox
         return FaceResult(
@@ -67,10 +68,12 @@ class FaceDetectorSource @Inject constructor() {
                 box.right.toFloat(),
                 box.bottom.toFloat()
             ),
-            leftEyeOpenProbability = leftEyeOpenProbability,
+            leftEyeOpenProbability  = leftEyeOpenProbability,
             rightEyeOpenProbability = rightEyeOpenProbability,
-            headEulerAngleY = headEulerAngleY,
-            score = 1.0f - (boundingBox.width().toFloat() / 1000f).coerceIn(0f, 0.5f)
+            headEulerAngleY         = headEulerAngleY,
+            score = if (trackingId != null) 1.0f else 0.7f
+            // trackingId is assigned by ML Kit once it's confident
+            // about a face across multiple frames — reliable signal
         )
     }
 

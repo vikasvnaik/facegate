@@ -5,11 +5,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
@@ -26,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import com.vikas.facegate.domain.model.AccessDecision
 import com.vikas.facegate.domain.model.PermissionState
 import com.vikas.facegate.presentation.ui.theme.FaceGateTheme
 import com.vikas.facegate.presentation.viewmodel.FaceGateViewModel
@@ -136,14 +139,15 @@ fun MainContent(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Layer 3 — debug text (top of screen)
-                Text(
-                    text = log,
+                // Layer 3 — state bar pinned to the bottom
+                val decision by viewModel!!.accessDecision.collectAsState()
+                StatusBar(
+                    message = log,
+                    decision = decision,
                     modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 48.dp, start = 16.dp, end = 16.dp),
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodyMedium
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 32.dp)
                 )
             }
 
@@ -187,6 +191,34 @@ fun MainContent(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun StatusBar(
+    message: String,
+    decision: AccessDecision,
+    modifier: Modifier = Modifier
+) {
+    val bg = when (decision) {
+        is AccessDecision.Scanning          -> Color(0xCC185FA5)
+        is AccessDecision.LivenessChallenge -> Color(0xCCBA7517)
+        is AccessDecision.Granted           -> Color(0xCC00C853)
+        is AccessDecision.Denied            -> Color(0xCCDD2C00)
+        else                                -> Color(0x99000000)
+    }
+    Box(
+        modifier = modifier
+            .background(bg, androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = message,
+            color = Color.White,
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
     }
 }
 

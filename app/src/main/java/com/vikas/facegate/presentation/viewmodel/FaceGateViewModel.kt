@@ -5,41 +5,46 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.vikas.facegate.data.camera.CameraRepository
 import com.vikas.facegate.data.camera.CameraState
-import com.vikas.facegate.data.camera.SessionState
 import com.vikas.facegate.data.face.FaceRepository
 import com.vikas.facegate.domain.model.AccessDecision
 import com.vikas.facegate.domain.model.FaceResult
 import com.vikas.facegate.domain.model.PermissionState
+import com.vikas.facegate.domain.usecase.EvaluateFaceUseCase
+import com.vikas.facegate.domain.usecase.ResetAccessUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class FaceGateViewModel @Inject constructor(
     private val cameraRepository: CameraRepository,
-    private val faceRepository: FaceRepository
-): ViewModel() {
+    private val faceRepository: FaceRepository,
+    private val evaluateFace: EvaluateFaceUseCase,
+    private val resetAccess: ResetAccessUseCase
+) : ViewModel() {
 
     private val _accessDecision = MutableStateFlow<AccessDecision>(AccessDecision.Idle)
     val accessDecision: StateFlow<AccessDecision> = _accessDecision.asStateFlow()
 
     private val _permissionState = MutableStateFlow<PermissionState?>(null)
     val permissionState: StateFlow<PermissionState?> = _permissionState.asStateFlow()
-    private val _debugLog = MutableStateFlow("Waiting...")
+
+    private val _debugLog = MutableStateFlow("Waiting for permissions...")
     val debugLog: StateFlow<String> = _debugLog.asStateFlow()
 
     private val _faceResults = MutableStateFlow<List<FaceResult>>(emptyList())
     val faceResults: StateFlow<List<FaceResult>> = _faceResults.asStateFlow()
 
     val cameraState: StateFlow<CameraState> = cameraRepository.cameraState
-    val sessionState: StateFlow<SessionState> = cameraRepository.sessionState
 
     private var detectionJob: Job? = null
+    private var resetJob: Job? = null
+
     private var rotationDegrees: Int = 270
 
     fun setRotationDegrees(degrees: Int) {
@@ -48,13 +53,26 @@ class FaceGateViewModel @Inject constructor(
 
     fun onPermissionState(state: PermissionState) {
         _permissionState.value = state
-        when(state) {
-            is PermissionState.Granted  -> {
-                _debugLog.value = "All permissions granted"
-                openCamera()
+        when (state) {
+            is PermissionState.Granted -> {
+                _debugLog.value = "Opening camera..."
+                cameraRepository.open(viewModelScope)
+                observeCameraState()
             }
-            is PermissionState.Denied   -> _debugLog.value = "Denied: ${state.permissions.joinToString()}"
-            is PermissionState.Rationale -> _debugLog.value = "Please grant camera & BLE permissions"
+            is PermissionState.Denied ->
+                _debugLog.value = "Denied: ${state.permissions.joinToString()}"
+            is PermissionState.Rationale ->
+                _debugLog.value = "Please grant permissions"
+        }
+    }
+
+    private fun observeCameraState() {
+        viewModelScope.launch {
+            cameraRepository.cameraState.collect { state ->
+                if (state is CameraState.Error) {
+                    _debugLog.value = "Camera error: ${state.message}"
+                }
+            }
         }
     }
 
@@ -75,6 +93,14 @@ class FaceGateViewModel @Inject constructor(
         }
     }
 
+    fun startPreview(surface: Surface) {
+        cameraRepository.startPreview(viewModelScope, surface)
+        viewModelScope.launch {
+            delay(500)
+            startFaceDetection()
+        }
+    }
+
     private fun startFaceDetection() {
         detectionJob?.cancel()
         detectionJob = viewModelScope.launch {
@@ -83,24 +109,48 @@ class FaceGateViewModel @Inject constructor(
                 rotationDegrees
             ).collect { faces ->
                 _faceResults.value = faces
-                _debugLog.value = when {
-                    faces.isEmpty() -> "No face detected"
-                    faces.size == 1 -> "Face detected " +
-                            "(eye L:${faces[0].leftEyeOpenProbability?.let {
-                                "%.0f%%".format(it * 100)
-                            } ?: "?"})"
-                    else -> "${faces.size} faces detected"
-                }
+                advanceStateMachine(faces)
             }
         }
     }
 
-    fun startPreview(previewSurface: Surface) {
-        cameraRepository.startPreview(viewModelScope, previewSurface)
-        viewModelScope.launch {
-            cameraRepository.sessionState.first { it is SessionState.Ready }
-            startFaceDetection()
+    /**
+     * Core state machine driver.
+     * EvaluateFaceUseCase is pure — all transition logic lives there.
+     * ViewModel only drives timing (reset delay) and side effects
+     * (logging, future BLE trigger in Phase 4).
+     */
+    private fun advanceStateMachine(faces: List<FaceResult>) {
+        val current  = _accessDecision.value
+        val next     = evaluateFace(faces, current)
+
+        // Only act on actual state changes
+        if (next == current) return
+
+        _accessDecision.value = next
+        _debugLog.value = stateLabel(next)
+
+        // Terminal states auto-reset after display period
+        if (next is AccessDecision.Granted || next is AccessDecision.Denied) {
+            scheduleReset()
         }
+    }
+
+    private fun scheduleReset() {
+        resetJob?.cancel()
+        resetJob = viewModelScope.launch {
+            delay(3_000L) // show result for 3 seconds
+            _accessDecision.value = resetAccess()
+            _debugLog.value = "Ready — show your face"
+        }
+    }
+
+    private fun stateLabel(state: AccessDecision) = when (state) {
+        is AccessDecision.Idle              -> "Ready — show your face"
+        is AccessDecision.Scanning          -> "Face detected — scanning..."
+        is AccessDecision.LivenessChallenge -> "Keep eyes open..."
+        is AccessDecision.Granted           -> "Access granted"
+        is AccessDecision.Denied            -> "Access denied: ${state.reason}"
     }
 
     fun stopPreview() {
@@ -113,6 +163,7 @@ class FaceGateViewModel @Inject constructor(
 
     fun closeCamera() {
         detectionJob?.cancel()
+        resetJob?.cancel()
         cameraRepository.close()
     }
 
@@ -120,6 +171,7 @@ class FaceGateViewModel @Inject constructor(
         super.onCleared()
         closeCamera()
     }
+
     fun log(msg: String) {
         _debugLog.value = msg
     }
